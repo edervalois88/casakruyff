@@ -116,10 +116,31 @@ for (const c of CASES) {
 }
 
 console.log("\nRESPUESTA DEL SERVIDOR");
-for (const u of [base + "/", "https://www.casakruyff.com/", base + "/brand/emblem.png"]) {
-  const res = await fetch(u, { redirect: "manual" });
-  console.log(`  ${u.padEnd(44)} ${res.status}`);
-  if (res.status >= 400) fail(`${u} responde ${res.status}`);
+{
+  const apex = await fetch(base + "/", { redirect: "manual" });
+  console.log(`  ${(base + "/").padEnd(44)} ${apex.status}`);
+  if (apex.status !== 200) fail(`${base}/ responde ${apex.status}`);
+
+  const asset = await fetch(base + "/brand/emblem.png", { redirect: "manual" });
+  console.log(`  ${(base + "/brand/emblem.png").padEnd(44)} ${asset.status}`);
+  if (asset.status !== 200) fail(`el emblema responde ${asset.status}`);
+
+  // www debe redirigir al dominio raíz (canónico elegido).
+  if (base === "https://casakruyff.com") {
+    const www = await fetch("https://www.casakruyff.com/", { redirect: "manual" });
+    const loc = www.headers.get("location");
+    console.log(`  ${"https://www.casakruyff.com/".padEnd(44)} ${www.status}  -> ${loc}`);
+    if (![301, 308].includes(www.status)) {
+      fail(`www debería redirigir (301/308), responde ${www.status}`);
+    } else if (!String(loc).startsWith("https://casakruyff.com")) {
+      fail(`www redirige a un destino inesperado: ${loc}`);
+    }
+  }
+
+  // Una ruta que no existe debe dar 404, no servir el index.
+  const missing = await fetch(base + "/no-existe-" + Date.now(), { redirect: "manual" });
+  console.log(`  ${"ruta inexistente".padEnd(44)} ${missing.status}`);
+  if (missing.status !== 404) fail(`una ruta inexistente responde ${missing.status}, se esperaba 404`);
 }
 
 await browser.close();

@@ -73,6 +73,9 @@ El proyecto detecta el sitio estático y sirve `index.html` desde la raíz.
 
 - **Producción:** cada push a `main` despliega automáticamente.
 - **Previews:** cada pull request genera su propia URL.
+- **Dominio canónico:** `casakruyff.com`. `www.casakruyff.com` responde 308
+  permanente hacia el dominio raíz, para que los buscadores no indexen la misma
+  página dos veces.
 - `.vercelignore` deja fuera `tools/`, `review/` y la documentación, de modo que
   sólo se publican `index.html` y `brand/`.
 
