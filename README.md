@@ -51,12 +51,32 @@ punteado dorado en la página hasta que los reemplaces. Si dejas un valor en
 ## Verificación
 
 ```bash
-node tools/shoot.mjs         # encaje, recursos, formulario, idioma, sin-JS
-node tools/check-motion.mjs  # entradas escalonadas y prefers-reduced-motion
+node tools/shoot.mjs         # local: encaje, recursos, formulario, idioma, sin-JS
+node tools/check-motion.mjs  # local: entradas escalonadas y prefers-reduced-motion
+node tools/verify-live.mjs   # producción: corre contra https://casakruyff.com
 ```
 
-Ambas corren contra Chrome real y salen con código distinto de cero si algo
-falla. Las capturas quedan en `review/`, que no se versiona.
+Las tres corren contra Chrome real y salen con código distinto de cero si algo
+falla. `verify-live.mjs` acepta otra URL como argumento, así que también sirve
+para revisar un preview:
+
+```bash
+node tools/verify-live.mjs https://casakruyff-abc123.vercel.app
+```
+
+Las capturas quedan en `review/`, que no se versiona.
+
+## Despliegue
+
+Conectar el repositorio a Vercel fue suficiente: no hay build que configurar.
+El proyecto detecta el sitio estático y sirve `index.html` desde la raíz.
+
+- **Producción:** cada push a `main` despliega automáticamente.
+- **Previews:** cada pull request genera su propia URL.
+- `.vercelignore` deja fuera `tools/`, `review/` y la documentación, de modo que
+  sólo se publican `index.html` y `brand/`.
+
+Para desplegar a mano: `vercel deploy --prod`.
 
 ## Reextraer los assets desde el PDF
 
