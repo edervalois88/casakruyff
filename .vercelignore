@@ -1,0 +1,7 @@
+# Fuera del despliegue: sólo el sitio se publica.
+tools/
+review/
+PLAN.md
+README.md
+.gitignore
+.vercelignore
