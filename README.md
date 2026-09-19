@@ -1,85 +1,89 @@
 # Casa Kruyff — Sitio en preparación
 
 Página en construcción de **Casa Kruyff**, casa de diseño y curaduría de
-interiores. Estática, sin build y sin dependencias: se abre `index.html` y
-funciona.
+interiores. Next.js + Framer Motion sobre Vercel.
 
 **En vivo:** https://casakruyff.com
 
 ---
 
-## Contenido
+## Estructura
 
 ```
-index.html          La página completa (HTML + CSS + JS en un archivo)
-brand/              Assets de marca extraídos del brand book oficial
-  emblem.png          Emblema ornamental, fondo transparente
-  emblem-ivory.png    El mismo emblema en Marfil, para fondos oscuros
-  wordmark.png        CASA KRUYFF, lockup horizontal
-  wordmark-stacked.png  Lockup vertical del brand book
-  lockup-share.png    Open Graph 1200x630
-tools/              Scripts de assets y verificación (no se despliegan)
+app/
+  layout.tsx           Metadatos, tipografías (next/font) y <html>
+  page.tsx             Composición de la página
+  globals.css          Tokens de marca y base
+  page.css             Estilos de la composición
+components/
+  Preloader.tsx        Velo de entrada y compuerta de la animación
+  Reveal.tsx           Envoltorio de entrada (con y sin animación)
+  Emblem.tsx           Emblema con parallax, barrido dorado y halo
+  Wordmark.tsx         Revelado del wordmark
+  SplitHeadline.tsx    Titular letra a letra
+  Waitlist.tsx         Lista de espera
+  Footer.tsx           Pie con contacto
+  LanguageProvider.tsx Idioma ES/EN con persistencia
+  LanguageSwitch.tsx   Selector con pastilla deslizante
+lib/
+  site.ts              Datos de contacto y del sitio  ← EDITAR AQUÍ
+  i18n.ts              Textos bilingües
+  entrance.ts          Curvas, duraciones y escalonado
+  usePrefersReducedMotion.tsx  Preferencia de movimiento
+public/brand/          Assets de marca
+tools/                 Scripts de assets y verificación (no se despliegan)
 ```
 
 ## Editar los datos de contacto
 
-Todo lo editable está en un solo bloque dentro de `index.html`:
+Todo está en `lib/site.ts`:
 
-```html
-<script id="kx-config">
-window.KX = {
-  email: "hola@casakruyff.com",
-  whatsapp: "5215500000000",
+```ts
+export const contact: Contact = {
+  email: null,              // ← correo real
+  whatsapp: null,           // ← número real, sólo dígitos
   whatsappMessage: "Hola, me interesa conocer Casa Kruyff.",
-  instagram: "casakruyff",
-  endpoint: null
+  instagram: null,          // ← usuario real, sin @
+  waitlistEndpoint: null,   // ← opcional, ver abajo
 };
-</script>
 ```
 
-Los tres primeros siguen siendo marcadores pendientes: aparecen subrayados con
-punteado dorado en la página hasta que los reemplaces. Si dejas un valor en
-`null` o vacío, ese enlace desaparece en lugar de quedar roto.
+Siguen siendo marcadores pendientes: en la página aparecen con subrayado punteado
+dorado y la palabra «pendiente». **Si un valor queda en `null`, ese enlace no se
+renderiza** en lugar de quedar roto.
 
-`endpoint` controla la lista de espera:
+`waitlistEndpoint` controla la lista de espera:
 
 - `null` — el formulario abre el correo del visitante con el mensaje ya escrito.
-  Funciona sin configurar nada y no finge un envío que no ocurrió.
 - Una URL que acepte `POST` de formulario (Formspree, Basin, endpoint propio) —
   captura el correo sin salir del sitio.
 
+## Desarrollo
+
+```bash
+npm install
+npm run dev          # http://localhost:3000
+npm run build        # build de producción
+npm start            # sirve el build
+```
+
 ## Verificación
 
-```bash
-node tools/shoot.mjs         # local: encaje, recursos, formulario, idioma, sin-JS
-node tools/check-motion.mjs  # local: entradas escalonadas y prefers-reduced-motion
-node tools/verify-live.mjs   # producción: corre contra https://casakruyff.com
-```
-
-Las tres corren contra Chrome real y salen con código distinto de cero si algo
-falla. `verify-live.mjs` acepta otra URL como argumento, así que también sirve
-para revisar un preview:
+Las tres suites corren contra Chrome real y salen con código distinto de cero si
+algo falla. Las capturas quedan en `review/`, que no se versiona.
 
 ```bash
-node tools/verify-live.mjs https://casakruyff-abc123.vercel.app
+npm run verify                 # encaje + movimiento, contra localhost:3100
+node tools/verify-live.mjs     # contra https://casakruyff.com
 ```
 
-Las capturas quedan en `review/`, que no se versiona.
+`verify-local.mjs` comprueba encaje en una pantalla sin scroll (7 viewports),
+desbordes, recursos, validación del formulario, cambio de idioma con persistencia,
+foco visible y **que la página se lea completa sin JavaScript**.
 
-## Despliegue
-
-Conectar el repositorio a Vercel fue suficiente: no hay build que configurar.
-El proyecto detecta el sitio estático y sirve `index.html` desde la raíz.
-
-- **Producción:** cada push a `main` despliega automáticamente.
-- **Previews:** cada pull request genera su propia URL.
-- **Dominio canónico:** `casakruyff.com`. `www.casakruyff.com` responde 308
-  permanente hacia el dominio raíz, para que los buscadores no indexen la misma
-  página dos veces.
-- `.vercelignore` deja fuera `tools/`, `review/` y la documentación, de modo que
-  sólo se publican `index.html` y `brand/`.
-
-Para desplegar a mano: `vercel deploy --prod`.
+`check-motion.mjs` comprueba que la entrada escalonada realmente corre, que el
+preloader aparece y se retira, y que `prefers-reduced-motion` deja todo
+compuesto sin animación.
 
 ## Reextraer los assets desde el PDF
 
@@ -87,32 +91,37 @@ Para desplegar a mano: `vercel deploy --prod`.
 python tools/build-assets.py
 ```
 
-Requiere PyMuPDF y Pillow. Lee el brand book oficial y regenera `brand/`
-completo: recorta el emblema y el wordmark, los convierte a tinta con alfa y los
-optimiza a PNG indexado.
+Requiere PyMuPDF y Pillow. Lee el brand book oficial y regenera `public/brand/`
+completo.
 
-## Identidad
+**Sobre el logo:** el PDF incrusta el logotipo como mapa de bits, no como
+vectores (`get_drawings()` sólo devuelve los contenedores de imagen). El arte
+real mide 1060×896 px — 164 dpi. Ese es el techo físico: no hay curvas que
+extraer y un auto-trace del ornamento produciría miles de nodos sucios. Por eso
+el emblema se anima por capas (parallax, barrido con máscara, halo) en lugar de
+trazarse con un `stroke-dasharray`.
 
-Derivada del brand book oficial (*branding*, Ochoa Studio). Decisiones y
-razonamiento completo en [`PLAN.md`](PLAN.md).
+## Notas de arquitectura
 
-| Token | HEX | Uso |
-|---|---|---|
-| Café Espresso | `#36281F` | Texto, tinta del logotipo |
-| Marfil | `#F4F0E6` | Fondo |
-| Dorado Antiguo | `#8E7125` | Ornamento: reglas, marcos, sellos |
-| Dorado para texto | `#7A6114` | Texto pequeño (AA: 5.2:1) |
+Dos decisiones que parecen raras y no lo son:
 
-Tipografía: **Cormorant Garamond** para display, **Lato** para texto y
-**Montserrat Thin** para etiquetas micro — la combinación que el propio brand
-book usa en sus aplicables.
+**Los elementos animados se montan sólo cuando toca animar.** Motion fija su
+estado inicial (`opacity: 0`) en el montaje y lo deja como estilo inline, así que
+ninguna regla CSS puede deshacerlo. Si se montara creyendo que no hay preferencia
+de movimiento, con `prefers-reduced-motion` el contenido se quedaría invisible
+para siempre. Por eso `Reveal` renderiza sin Motion cuando no toca, y
+`usePrefersReducedMotion` sólo devuelve el valor real después de hidratar.
 
-### Accesibilidad
+**El preloader es una compuerta, no un adorno.** Mientras el velo tapa la
+pantalla, los bloques de la página están `hidden`. Así los elementos se montan
+con su estado inicial sin llegar a pintarse, y la entrada corre al descubrirse.
+Sin JavaScript el atributo `hidden` nunca se pone y la página se ve completa.
 
-WCAG AA. Todas las animaciones respetan `prefers-reduced-motion` y la página se
-lee completa sin JavaScript. El Dorado Antiguo del manual da 4.07:1 sobre
-Marfil y no alcanza AA, así que se reserva para ornamento; el texto pequeño usa
-`#7A6114` (5.2:1), el mismo oro oscurecido.
+## Despliegue
+
+Cada push a `main` despliega automáticamente en Vercel. El dominio canónico es
+`casakruyff.com`; `www.casakruyff.com` responde 308 permanente hacia el raíz.
+`.vercelignore` deja fuera `tools/`, `review/` y la documentación.
 
 ---
 

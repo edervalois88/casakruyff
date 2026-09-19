@@ -5,6 +5,48 @@ Plan y entregable construidos a partir del brand book oficial
 
 ---
 
+## Actualización: segunda versión
+
+La primera entrega era HTML estático en un archivo. La segunda la reconstruye
+como **Next.js + Framer Motion**, con estas decisiones y sus motivos.
+
+**Qué se conservó.** El concepto (el emblema es un marco vacío: el sitio que
+todavía no existe), la paleta del brand book, la tipografía Cormorant Garamond,
+el enfoque de accesibilidad y la honestidad sobre los datos pendientes.
+
+**Qué cambió.**
+
+| Antes | Ahora | Por qué |
+|---|---|---|
+| HTML estático, CSS propio con animaciones declarativas | Next.js 16 + Framer Motion | Framer Motion necesita React. Además da componentes, tipografías optimizadas en build y despliegue continuo. |
+| Sin preloader | Preloader que evoca el packaging del brand book | El manual muestra una caja oscura con la pieza clara dentro. Ese gesto abre ahora la página, y se ve una sola vez por sesión. |
+| Marfil + Espresso + oro | Se suman **Chocolate, Arena y Lino** como capas tonales | El manual lista esos secundarios para «fondos alternativos, bloques de color y aplicaciones editoriales». Se usan en el fondo (degradado Lino→Arena), el halo del emblema y los marcos, sin tocar el oro, que sigue siendo el único acento. |
+| Entrada por opacidad y desenfoque | Entrada por capas: barrido del wordmark, titular letra a letra, regla trazada desde el centro, barrido dorado sobre el emblema, parallax, halo que respira | El usuario pidió más detalle de animación. |
+| Logo como PNG fijo | Logo con animación por capas | Ver la nota sobre el SVG, abajo. |
+
+**Sobre vectorizar el logo: no se puede, y conviene saber por qué.** El PDF
+incrusta el logotipo como **mapa de bits**, no como vectores: `get_drawings()`
+devuelve únicamente los dos contenedores de imagen. Lo comprobé extrayendo las
+dos imágenes embebidas (el arte en RGB y su máscara de transparencia) y midiendo
+el arte real: **1060×896 px útiles, 164 dpi**. Ése es el techo físico. Un
+auto-trace del ornamento barroco produciría miles de nodos sucios y perdería las
+líneas de 1 px.
+
+Así que el emblema se anima **por capas sobre el arte fiel al manual**, no
+trazándose:
+
+1. **Parallax** — se desplaza una fracción de lo que se desplaza la página.
+2. **Barrido dorado** — una banda de oro cruza el ornamento cada ~8 s, recortada
+   con una máscara en movimiento para que respete la silueta en vez de pasar por
+   encima como un rectángulo. Pasa y se va: el manual pide dorado puntual.
+3. **Halo** — un resplandor cálido respira detrás, muy tenue.
+
+Si en el futuro aparece el logotipo en vectores (el archivo original de Ochoa
+Studio), el mismo componente admite un `stroke-dasharray` para trazarlo de
+verdad. El resto de la página no cambiaría.
+
+---
+
 ## 1. Lo que dice el brand book
 
 ### Posicionamiento

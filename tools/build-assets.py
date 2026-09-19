@@ -1,16 +1,22 @@
 """
 Casa Kruyff — extracción de assets de marca desde el brand book PDF.
 
-Lee el PDF oficial (branding / Ochoa Studio) y produce los assets web de la
-página en construcción:
+El PDF (branding / Ochoa Studio) incrusta el logotipo como MAPA DE BITS, no como
+vectores: `get_drawings()` devuelve sólo 2 objetos (los propios contenedores de
+imagen). Por eso no hay curvas que extraer y el auto-trace de un ornamento
+barroco produciría miles de nodos sucios.
 
-  brand/emblem.png                 emblema ornamental, fondo transparente
-  brand/wordmark.png               wordmark CASA KRUYFF (lockup horizontal)
-  brand/wordmark-stacked.png       lockup vertical del brand book
-  brand/lockup-share.png           composición para Open Graph / redes
+Truco de calidad: el arte vive en dos imágenes embebidas — el color (RGB) y su
+máscara de transparencia (escala de grises) — ambas a 1939x1224. El alfa es un
+canal limpio, así que se reconstruye el RGBA y se reduce con LANCZOS. Al
+renderizar el PDF a 900 dpi se obtienen 3880x2448 px de origen, más del doble de
+la resolución real del arte: ese supermuestreo es lo que suaviza las líneas de
+1 px del ornamento.
 
-Uso:
-    python tools/build-assets.py
+Resolución real del arte: 1060x896 px útiles (164 dpi). Es el techo físico.
+
+Salida en public/brand/.
+Uso: python tools/build-assets.py
 """
 
 from __future__ import annotations
@@ -27,25 +33,32 @@ PDF = Path(
     r"\Casa Kruyff.pdf"
 )
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "brand"
+OUT = ROOT / "public" / "brand"
 
-# Bounding box del arte del logo en la página 19 del brand book (en pt).
+# Lockup del logo en la página 19 del brand book (en pt).
 LOGO_BOX = (63.7, 295.2, 529.1, 588.9)
-
-# Separación vertical detectada entre emblema y wordmark dentro del lockup.
+DPI = 900
 BAND_GAP = 12
 
+# Anchos de salida: el emblema se usa a ~140 px CSS (280 en retina) y el
+# wordmark a ~320 px CSS (640 en retina). El doble cubre pantallas 2x con
+# margen; más allá sólo añade peso.
+EMBLEM_W = 900
+WORDMARK_W = 1400
 
-def render(page_index: int, box: tuple[float, float, float, float], dpi: int) -> Image.Image:
-    """Renderiza una región del PDF a RGBA."""
+ESPRESSO = (0x36, 0x28, 0x1F)
+MARFIL = (0xF4, 0xF0, 0xE6)
+
+
+def render(page_index: int, box: tuple[float, float, float, float]) -> Image.Image:
     doc = fitz.open(PDF)
     page = doc[page_index]
-    pix = page.get_pixmap(clip=fitz.Rect(*box), dpi=dpi, alpha=False)
+    pix = page.get_pixmap(clip=fitz.Rect(*box), dpi=DPI, alpha=False)
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
 def bands(img: Image.Image) -> list[tuple[int, int]]:
-    """Encuentra las bandas horizontales con contenido (tinta sobre blanco)."""
+    """Bandas horizontales con contenido (tinta sobre blanco)."""
     import numpy as np
 
     a = np.asarray(img.convert("L"), dtype=np.float32)
@@ -66,55 +79,18 @@ def bands(img: Image.Image) -> list[tuple[int, int]]:
     return out
 
 
-def to_alpha(img: Image.Image, threshold: int = 246, feather: float = 1.0) -> Image.Image:
-    """
-    Convierte tinta oscura sobre blanco en alfa con color espresso.
-
-    La luminancia se usa como canal alfa invertido, de modo que el trazo
-    conserva su antialiasing en lugar de quedar escalonado.
-    """
+def to_ink(img: Image.Image, rgb: tuple[int, int, int] = ESPRESSO, threshold: int = 246) -> Image.Image:
+    """Tinta oscura sobre blanco -> capa alfa. Conserva el antialiasing."""
     import numpy as np
 
     a = np.asarray(img.convert("L"), dtype=np.float32)
-    # Normaliza: blanco puro (>=threshold) -> transparente; negro -> opaco.
     alpha = np.clip((threshold - a) / threshold, 0.0, 1.0)
-    if feather > 1.0:
-        alpha = np.clip(alpha * feather, 0.0, 1.0)
-    alpha = (alpha ** 0.92) * 255.0
 
     h, w = a.shape
     out = np.zeros((h, w, 4), dtype=np.uint8)
-    out[..., 0] = 0x36  # Café Espresso
-    out[..., 1] = 0x28
-    out[..., 2] = 0x1F
-    out[..., 3] = alpha.astype(np.uint8)
+    out[..., 0], out[..., 1], out[..., 2] = rgb
+    out[..., 3] = (alpha ** 0.92 * 255.0).astype(np.uint8)
     return Image.fromarray(out, "RGBA")
-
-
-def trim(img: Image.Image, pad: int = 0, floor: int = 3) -> Image.Image:
-    """Recorta el margen vacío usando el canal alfa."""
-    import numpy as np
-
-    a = np.asarray(img)
-    mask = a[..., 3] > floor
-    ys, xs = np.where(mask)
-    if ys.size == 0:
-        return img
-    box = (
-        max(int(xs.min()) - pad, 0),
-        max(int(ys.min()) - pad, 0),
-        min(int(xs.max()) + 1 + pad, img.width),
-        min(int(ys.max()) + 1 + pad, img.height),
-    )
-    return img.crop(box)
-
-
-def fit(img: Image.Image, target_w: int) -> Image.Image:
-    """Escala a un ancho objetivo conservando proporción (nunca agranda)."""
-    if img.width <= target_w:
-        return img
-    h = round(img.height * target_w / img.width)
-    return img.resize((target_w, h), Image.LANCZOS)
 
 
 def flatten_alpha(img: Image.Image, floor: float = 0.10) -> Image.Image:
@@ -122,8 +98,8 @@ def flatten_alpha(img: Image.Image, floor: float = 0.10) -> Image.Image:
     Colapsa el alfa casi vacío a cero.
 
     El antialiasing del PDF deja miles de valores intermedios que arruinan la
-    compresión por tramas largas. Recortar el ruido por debajo del 10 % reduce
-    el archivo a ~1/6 sin cambio visible a tamaño de uso.
+    compresión por tramas largas. Recortar por debajo del 10 % reduce el archivo
+    a ~1/6 sin cambio visible a tamaño de uso.
     """
     import numpy as np
 
@@ -133,65 +109,26 @@ def flatten_alpha(img: Image.Image, floor: float = 0.10) -> Image.Image:
     return Image.fromarray(a.astype(np.uint8), "RGBA")
 
 
-def save(img: Image.Image, name: str, width: int | None = None, colors: int = 32) -> None:
-    """
-    Escala a `width` y guarda en PNG indexado.
+def trim(img: Image.Image, pad: int = 4, floor: int = 3) -> Image.Image:
+    import numpy as np
 
-    El emblema y el wordmark son tinta monocromática, así que una paleta de 32
-    colores es indistinguible del RGBA completo y pesa una fracción. El escalado
-    se hace en RGBA (LANCZOS sobre paleta mete ruido de cuantización) y la
-    reducción de paleta va al final.
-    """
-    path = OUT / name
-    if width:
-        img = fit(img, width)
-    if colors and img.mode != "P":
-        img = img.convert("P", palette=Image.ADAPTIVE, colors=colors)
-    img.save(path, "PNG", optimize=True)
-    print(f"  {name:28} {img.width:>5}x{img.height:<5} {path.stat().st_size / 1024:7.1f} KB")
+    a = np.asarray(img)
+    ys, xs = np.where(a[..., 3] > floor)
+    if ys.size == 0:
+        return img
+    return img.crop((
+        max(int(xs.min()) - pad, 0),
+        max(int(ys.min()) - pad, 0),
+        min(int(xs.max()) + 1 + pad, img.width),
+        min(int(ys.max()) + 1 + pad, img.height),
+    ))
 
 
-def main() -> int:
-    if not PDF.exists():
-        print(f"No se encontró el brand book: {PDF}", file=sys.stderr)
-        return 1
-
-    OUT.mkdir(parents=True, exist_ok=True)
-    print("Extrayendo assets de marca…")
-
-    # Render amplio del lockup horizontal y vertical a alta resolución.
-    horizontal_word = None
-    for label, page_index, dpi in (
-        ("horizontal", 18, 900),
-        ("stacked", 19, 900),
-    ):
-        art = render(page_index, LOGO_BOX, dpi)
-        found = bands(art)
-        if len(found) < 2:
-            print(f"  aviso: bandas inesperadas en {label}: {found}", file=sys.stderr)
-            continue
-
-        (e0, e1), (w0, w1) = found[0], found[-1]
-
-        emblem = flatten_alpha(trim(to_alpha(art.crop((0, e0, art.width, e1 + 1))), pad=4))
-        word = flatten_alpha(trim(to_alpha(art.crop((0, w0, art.width, w1 + 1))), pad=4))
-
-        if label == "horizontal":
-            save(emblem, "emblem.png", width=900)
-            save(word, "wordmark.png", width=1800)
-            save(compose(emblem, word), "lockup-share.png", colors=128)
-            # Marfil para fondos oscuros: mismo trazo, tinta Marfil.
-            save(recolor(emblem, (0xF4, 0xF0, 0xE6)), "emblem-ivory.png", width=900)
-            horizontal_word = word
-        else:
-            save(word, "wordmark-stacked.png", width=1500)
-
-    if horizontal_word is None:
-        print("No se pudo extraer el lockup horizontal.", file=sys.stderr)
-        return 1
-
-    print("Listo.")
-    return 0
+def downscale(img: Image.Image, width: int | None) -> Image.Image:
+    """LANCZOS sobre RGBA. Nunca agranda: el origen ya es el techo."""
+    if not width or img.width <= width:
+        return img
+    return img.resize((width, round(img.height * width / img.width)), Image.LANCZOS)
 
 
 def recolor(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
@@ -202,21 +139,66 @@ def recolor(img: Image.Image, rgb: tuple[int, int, int]) -> Image.Image:
     return Image.fromarray(a, "RGBA")
 
 
-def compose(emblem: Image.Image, word: Image.Image) -> Image.Image:
-    """Reconstruye el lockup del brand book sobre Marfil, formato 1200x630."""
+def save(img: Image.Image, name: str, width: int | None = None, colors: int = 32) -> None:
+    """Escala, convierte a paleta y guarda. La paleta va al final."""
+    path = OUT / name
+    img = downscale(img, width)
+    if colors and img.mode != "P":
+        img = img.convert("P", palette=Image.ADAPTIVE, colors=colors)
+    img.save(path, "PNG", optimize=True)
+    print(f"  {name:26} {img.width:>5}x{img.height:<5} {path.stat().st_size / 1024:7.1f} KB")
+
+
+def compose_share(emblem: Image.Image, word: Image.Image) -> Image.Image:
+    """Lockup del brand book sobre Marfil, 1200x630 para Open Graph."""
     W, H = 1200, 630
-    canvas = Image.new("RGBA", (W, H), (0xF4, 0xF0, 0xE6, 255))
-
-    em = fit(emblem, 300)
-    wm = fit(word, 560)
-
+    canvas = Image.new("RGBA", (W, H), (*MARFIL, 255))
+    em = downscale(emblem, 300)
+    wm = downscale(word, 560)
     gap = 44
-    total = em.height + gap + wm.height
-    top = (H - total) // 2
-
+    top = (H - (em.height + gap + wm.height)) // 2
     canvas.alpha_composite(em, ((W - em.width) // 2, top))
     canvas.alpha_composite(wm, ((W - wm.width) // 2, top + em.height + gap))
     return canvas
+
+
+def main() -> int:
+    if not PDF.exists():
+        print(f"No se encontró el brand book: {PDF}", file=sys.stderr)
+        return 1
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    print(f"Extrayendo assets a {DPI} dpi (origen ~{DPI / 72 * 465:.0f} px de ancho)…")
+
+    for label, page_index in (("horizontal", 18), ("stacked", 19)):
+        art = render(page_index, LOGO_BOX)
+        found = bands(art)
+        if len(found) < 2:
+            print(f"  aviso: bandas inesperadas en {label}: {found}", file=sys.stderr)
+            continue
+
+        (e0, e1), (w0, w1) = found[0], found[-1]
+        emblem = flatten_alpha(trim(to_ink(art.crop((0, e0, art.width, e1 + 1)))))
+        word = flatten_alpha(trim(to_ink(art.crop((0, w0, art.width, w1 + 1)))))
+
+        if label == "horizontal":
+            save(emblem, "emblem.png", EMBLEM_W)
+            save(word, "wordmark.png", WORDMARK_W)
+            save(compose_share(emblem, word), "lockup-share.png", colors=128)
+            # Marfil sobre fondos oscuros: mismo trazo, otra tinta.
+            save(recolor(emblem, MARFIL), "emblem-ivory.png", EMBLEM_W)
+            # El wordmark también en Marfil, para el preloader sobre Espresso.
+            save(recolor(word, MARFIL), "wordmark-ivory.png", WORDMARK_W)
+            # Icono cuadrado para favicon / apple-touch-icon.
+            icon = Image.new("RGBA", (512, 512), (*MARFIL, 255))
+            em_icon = downscale(emblem, 300)
+            icon.alpha_composite(em_icon, ((512 - em_icon.width) // 2, (512 - em_icon.height) // 2))
+            save(icon, "icon-512.png", colors=64)
+        else:
+            save(word, "wordmark-stacked.png", 1200)
+
+    print("Listo.")
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,131 +1,177 @@
 /**
- * Comprueba que la entrada escalonada existe y se ejecuta, y que
- * prefers-reduced-motion la desactiva.
+ * Verifica el movimiento de la página.
  *
- * En lugar de muestrear opacidades en tiempos fijos (frágil: la ventana en la
- * que un elemento está a medio aparecer dura décimas), se consulta el registro
- * de animaciones del navegador y se avanza el reloj a voluntad.
+ * Uso:  node tools/check-motion.mjs [url]
+ * Por omisión: http://localhost:3100
  *
- * Uso: node tools/check-motion.mjs
+ * Comprueba que la entrada escalonada realmente ocurre, que el preloader se
+ * retira, que el barrido del emblema existe, y que prefers-reduced-motion deja
+ * todo compuesto sin animación.
  */
 import { chromium } from "playwright";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { mkdir } from "node:fs/promises";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const url = pathToFileURL(resolve(here, "..", "index.html")).href;
+const base = (process.argv[2] || "http://localhost:3100").replace(/\/$/, "");
+const out = resolve(dirname(fileURLToPath(import.meta.url)), "..", "review");
+await mkdir(out, { recursive: true });
 
 let failures = 0;
 const fail = (m) => { failures++; console.log(`  x ${m}`); };
 
 const browser = await chromium.launch({ channel: "chrome" });
 
-/* ── 1. Animaciones registradas y con retraso escalonado ────────────────── */
+/* ── 1. El preloader aparece y se retira ─────────────────────────────────── */
+console.log("PRELOADER (primera visita, sin sesión previa)");
 {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(url, { waitUntil: "load" });
-  await page.waitForTimeout(300);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
+  await page.goto(base + "/", { waitUntil: "load" });
 
+  // El velo se monta en un efecto, después del evento `load`: hay que esperarlo
+  // en vez de consultar de inmediato.
+  const appeared = await page
+    .waitForSelector(".preloader", { timeout: 3000 })
+    .then(() => true)
+    .catch(() => false);
+
+  const early = await page.evaluate(() => {
+    const frame = document.querySelector(".frame");
+    const char = document.querySelector(".headline__char");
+    return {
+      present: !!document.querySelector(".preloader"),
+      // Mientras el velo tapa, los bloques de la página están `hidden`: se
+      // montan (y Motion fija su estado inicial) sin llegar a pintarse así.
+      pageHidden: frame ? frame.hasAttribute("hidden") : null,
+      headline: char ? +(+getComputedStyle(char).opacity).toFixed(2) : null,
+    };
+  });
+  console.log(
+    `  al cargar        -> preloader=${early.present ? "visible" : "ausente"}  ` +
+    `página oculta=${early.pageHidden ? "sí (correcto)" : "NO"}  titular=${early.headline}`
+  );
+  if (!appeared || !early.present) fail("el preloader no aparece en la primera visita");
+  if (!early.pageHidden) fail("la página se está pintando detrás del velo (la entrada no arrancaría)");
+
+  await page.waitForTimeout(1400);
+  await page.screenshot({ path: resolve(out, "preloader.png") });
+
+  await page.waitForTimeout(3600);
+  const late = await page.evaluate(() => ({
+    present: !!document.querySelector(".preloader"),
+    headline: +(+getComputedStyle(document.querySelector(".headline__char")).opacity).toFixed(2),
+  }));
+  console.log(`  tras la entrada  -> preloader=${late.present ? "AÚN VISIBLE" : "retirado"}  titular=${late.headline}`);
+  if (late.present) fail("el preloader no se retiró");
+  if (late.headline !== 1) fail(`el titular quedó en opacidad ${late.headline}`);
+
+  await context.close();
+}
+
+/* ── 2. Entrada escalonada y barrido del emblema ─────────────────────────── */
+console.log("\nMOVIMIENTO");
+{
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  await context.addInitScript(() => {
+    try { window.sessionStorage.setItem("kx-seen", "1"); window.localStorage.setItem("kx-lang", "es"); } catch {}
+  });
+  const page = await context.newPage();
+  await page.goto(base + "/", { waitUntil: "load" });
+
+  // Las animaciones que Motion registra en el navegador, con su estado.
   const anims = await page.evaluate(() =>
     document.getAnimations().map((a) => ({
-      name: a.animationName,
-      delay: a.effect.getTiming().delay,
-      duration: a.effect.getTiming().duration,
-      target: a.effect.target?.className || a.effect.target?.tagName,
+      name: a.animationName || a.id || "(motion)",
+      state: a.playState,
     }))
   );
+  console.log(`  animaciones registradas al cargar: ${anims.length}`);
 
-  console.log("ANIMACIONES DE ENTRADA");
-  for (const a of anims) {
+  // Muestreo del titular: debe pasar por valores intermedios.
+  const samples = [];
+  for (const at of [250, 900, 1800, 3200, 4200]) {
+    await page.waitForTimeout(at - (samples.at(-1)?.at ?? 0));
+    const s = await page.evaluate(() => {
+      const chars = [...document.querySelectorAll(".headline__char")];
+      const op = chars.map((c) => +(+getComputedStyle(c).opacity).toFixed(2));
+      const rule = document.querySelector(".rule");
+      const foot = document.querySelector(".foot");
+      return {
+        minChar: op.length ? Math.min(...op) : -1,
+        maxChar: op.length ? Math.max(...op) : -1,
+        ruleOpacity: rule ? +(+getComputedStyle(rule).opacity).toFixed(2) : -1,
+        footOpacity: foot ? +(+getComputedStyle(foot).opacity).toFixed(2) : -1,
+        sheen: !!document.querySelector(".emblem__sheen"),
+        glowOpacity: (() => {
+          const g = document.querySelector(".emblem__glow");
+          return g ? +(+getComputedStyle(g).opacity).toFixed(2) : -1;
+        })(),
+      };
+    });
+    samples.push({ at, ...s });
+  }
+
+  for (const s of samples) {
     console.log(
-      `  ${String(a.name).padEnd(7)} retraso=${String(a.delay).padStart(4)}ms ` +
-      `duración=${a.duration}ms  objetivo=${String(a.target).split(" ")[0]}`
+      `  t=${String(s.at).padStart(4)}ms  letras[min..max]=${s.minChar}..${s.maxChar}  ` +
+      `regla=${s.ruleOpacity}  pie=${s.footOpacity}  halo=${s.glowOpacity}  barrido=${s.sheen ? "sí" : "no"}`
     );
   }
 
-  const expected = ["veil", "ink", "trazo", "rise"];
-  for (const name of expected) {
-    if (!anims.some((a) => a.name === name)) fail(`falta la animación "${name}"`);
-  }
-  if (anims.length < 8) fail(`se esperaban al menos 8 animaciones, hay ${anims.length}`);
+  const last = samples.at(-1);
+  if (last.maxChar !== 1) fail(`el titular no terminó visible (max=${last.maxChar})`);
+  if (last.ruleOpacity !== 1) fail(`la regla no terminó visible (${last.ruleOpacity})`);
+  if (last.footOpacity !== 1) fail(`el pie no terminó visible (${last.footOpacity})`);
+  if (!last.sheen) fail("no existe la capa de barrido dorado del emblema");
 
-  // El escalonado debe ser real: retrasos distintos y crecientes.
-  const delays = [...new Set(anims.map((a) => a.delay))].sort((x, y) => x - y);
-  console.log(`  retrasos distintos: ${delays.join(", ")}ms`);
-  if (delays.length < 4) fail("el escalonado no tiene retrasos diferenciados");
+  // El escalonado debe producir letras a distinta opacidad en algún momento.
+  const staggered = samples.some((s) => s.minChar < 1 && s.maxChar > 0);
+  if (!staggered) fail("no se observó revelado escalonado por carácter");
+  else console.log("  -> revelado escalonado por carácter verificado");
 
-  await page.close();
+  await context.close();
 }
 
-/* ── 2. Estado final tras completarse ───────────────────────────────────── */
+/* ── 3. prefers-reduced-motion ───────────────────────────────────────────── */
+console.log("\nMOVIMIENTO REDUCIDO");
 {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.goto(url, { waitUntil: "load" });
-  await page.waitForTimeout(3600);
-
-  const final = await page.evaluate(() => {
-    const read = (sel) => {
-      const el = document.querySelector(sel);
-      if (!el) return null;
-      const s = getComputedStyle(el);
-      return { opacity: +(+s.opacity).toFixed(3), display: s.display, filter: s.filter };
-    };
-    const anims = document.getAnimations();
-    return {
-      // Con `fill: forwards` una animación terminada sigue listada: lo que
-      // importa es su playState, no el conteo.
-      running: anims.filter((a) => a.playState === "running").length,
-      pending: anims.filter((a) => a.playState === "paused").length,
-      total: anims.length,
-      veil: read(".emblem__veil"),
-      wordmark: read(".wordmark"),
-      rule: read(".rule"),
-      eyebrow: read(".eyebrow"),
-      headline: read(".headline"),
-      body: read(".body"),
-      waitlist: read(".waitlist"),
-      foot: read(".foot"),
-    };
-  });
-
-  console.log("\nESTADO FINAL (todo visible, nada animándose)");
-  for (const [k, v] of Object.entries(final)) {
-    if (k === "running" || k === "pending" || k === "total") continue;
-    console.log(`  ${k.padEnd(9)} opacity=${v.opacity}  display=${v.display}  filter=${v.filter}`);
-  }
-  console.log(`  animaciones: ${final.total} registradas, ${final.running} en curso, ${final.pending} en pausa`);
-
-  for (const key of ["wordmark", "rule", "eyebrow", "headline", "body", "waitlist", "foot"]) {
-    if (final[key]?.opacity !== 1) fail(`${key}: opacidad final ${final[key]?.opacity}, se esperaba 1`);
-  }
-  if (final.running !== 0) fail(`quedaron ${final.running} animaciones en curso`);
-  await page.close();
-}
-
-/* ── 3. prefers-reduced-motion ──────────────────────────────────────────── */
-{
-  const page = await browser.newPage({
+  const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",
   });
-  await page.goto(url, { waitUntil: "load" });
-  await page.waitForTimeout(400);
+  await context.addInitScript(() => {
+    try { window.sessionStorage.setItem("kx-seen", "1"); } catch {}
+  });
+  const page = await context.newPage();
+  await page.goto(base + "/", { waitUntil: "load" });
+  await page.waitForTimeout(700);
 
   const state = await page.evaluate(() => {
-    const veil = document.querySelector(".emblem__veil");
-    const read = (sel) => +(+getComputedStyle(document.querySelector(sel)).opacity).toFixed(3);
+    const read = (sel) => {
+      const el = document.querySelector(sel);
+      return el ? +(+getComputedStyle(el).opacity).toFixed(2) : -1;
+    };
     return {
-      veilDisplay: veil ? getComputedStyle(veil).display : "ausente",
+      preloader: !!document.querySelector(".preloader"),
       headline: read(".headline"),
+      body: read(".body"),
       foot: read(".foot"),
+      sheen: !!document.querySelector(".emblem__sheen"),
     };
   });
 
-  console.log("\nMOVIMIENTO REDUCIDO (compuesto desde el primer frame)");
-  console.log(`  velo=${state.veilDisplay}  headline.opacity=${state.headline}  foot.opacity=${state.foot}`);
-  if (state.veilDisplay !== "none") fail("reduced-motion: el velo sigue presente");
-  if (state.headline !== 1 || state.foot !== 1) fail("reduced-motion: hay contenido invisible");
-  await page.close();
+  console.log(
+    `  preloader=${state.preloader ? "VISIBLE" : "ausente"}  titular=${state.headline}  ` +
+    `cuerpo=${state.body}  pie=${state.foot}  barrido=${state.sheen ? "presente" : "desactivado"}`
+  );
+  if (state.preloader) fail("reduced-motion: el preloader sigue visible");
+  if (state.headline !== 1 || state.body !== 1 || state.foot !== 1) {
+    fail("reduced-motion: hay contenido invisible");
+  }
+  if (state.sheen) fail("reduced-motion: el barrido del emblema sigue activo");
+
+  await context.close();
 }
 
 await browser.close();

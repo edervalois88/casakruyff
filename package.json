@@ -1,0 +1,27 @@
+{
+  "name": "casakruyff",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sitio en preparación de Casa Kruyff — casa de diseño y curaduría de interiores",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "assets": "python tools/build-assets.py",
+    "verify": "node tools/verify-local.mjs && node tools/check-motion.mjs",
+    "verify:live": "node tools/verify-live.mjs"
+  },
+  "dependencies": {
+    "motion": "^13.4.0",
+    "next": "^16.3.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  }
+}

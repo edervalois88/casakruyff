@@ -1,4 +1,9 @@
 # Capturas de verificación: no se versionan ni se despliegan.
 review/
 
+# Next.js / Vercel
 .vercel
+.next
+node_modules
+next-env.d.ts
+*.tsbuildinfo
